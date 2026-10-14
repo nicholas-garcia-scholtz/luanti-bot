@@ -1,13 +1,18 @@
 """Decompression helpers.
 
 Luanti compresses map blocks and definition packets with zlib (older
-serialisation formats) or zstd (serialisation format >= 29). There is no zstd
-module in the stdlib, so libzstd is bound directly with ctypes -- this keeps the
-bot dependency-free.
+serialisation formats) or zstd (serialisation format >= 29). Python 3.14+
+ships zstd in the stdlib (`compression.zstd`); on older versions libzstd is
+bound directly with ctypes -- either way the bot stays dependency-free.
 """
 import ctypes
 import ctypes.util
 import zlib
+
+try:
+    from compression.zstd import ZstdDecompressor
+except ImportError:
+    ZstdDecompressor = None
 
 _lib = None
 
@@ -15,7 +20,9 @@ _lib = None
 def _zstd():
     global _lib
     if _lib is None:
-        path = ctypes.util.find_library("zstd") or "libzstd.so.1"
+        path = (ctypes.util.find_library("zstd")
+                or ctypes.util.find_library("libzstd")   # Windows: libzstd.dll
+                or "libzstd.so.1")
         _lib = ctypes.CDLL(path)
         _lib.ZSTD_createDStream.restype = ctypes.c_void_p
         _lib.ZSTD_freeDStream.argtypes = [ctypes.c_void_p]
@@ -44,6 +51,13 @@ def zstd_decompress_stream(data: bytes, out_chunk: int = 1 << 16):
     prefix, so this returns (plaintext, bytes_consumed) and stops at the end of
     the first frame.
     """
+    if ZstdDecompressor is not None:
+        d = ZstdDecompressor()
+        out = d.decompress(data)
+        if not d.eof:
+            raise RuntimeError("zstd: truncated frame")
+        return out, len(data) - len(d.unused_data)
+
     lib = _zstd()
     ds = lib.ZSTD_createDStream()
     if not ds:

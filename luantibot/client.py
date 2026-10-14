@@ -143,10 +143,13 @@ class LuantiClient:
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if not self.pump(0.2):
-                raise Disconnected(self.conn.disconnect_reason or "connection lost")
+            alive = self.pump(0.2)
+            # The server sends ACCESS_DENIED and then DISCO, so check the
+            # reason first or it is lost behind "server sent DISCO".
             if self.access_denied:
                 raise LoginError(self.access_denied)
+            if not alive:
+                raise Disconnected(self.conn.disconnect_reason or "connection lost")
             if self.ready:
                 return True
         raise LoginError("timed out during login")
